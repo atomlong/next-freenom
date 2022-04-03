@@ -1,0 +1,61 @@
+kind: pipeline
+type: docker
+name: renew
+
+environment:
+  CI_NAME: drone
+  CI_REPO: ${DRONE_REPO}
+  CI_BRANCH: ${DRONE_BRANCH}
+  CI_BUILD_NUMBER: ${DRONE_BUILD_NUMBER}
+  CI_BUILD_URL: ${DRONE_BUILD_LINK}
+  CRONJOB: "run-daily"
+  CRONEXPR: "0 0 0 * * *"
+
+steps:
+- name: run-freenom
+  image: archlinux
+  commands:
+  - # Work-around the issue with glibc 2.33 on old Docker engines
+  - # Extract files directly as pacman is also affected by the issue
+  - if [ $(ldd --version | head -n1 | sed -r 's/.* ([0-9]+\.[0-9]+)\s*$/\1/') == "2.33" ]; then
+  - patched_glibc=glibc-linux4-2.33-5-x86_64.pkg.tar.zst
+  - curl -LO "https://repo.archlinuxcn.org/x86_64/$${patched_glibc}"
+  - bsdtar -C / -xf $${patched_glibc}
+  - fi
+  - pacman-key --init
+  - pacman-key --populate archlinux
+  - # Run CI script.
+  - export CI_BUILD_DIR=$(pwd)
+  - ./ci-build.sh
+  environment:
+    CI_NAME: drone
+    CI_REPO: ${DRONE_REPO}
+    CI_BRANCH: ${DRONE_BRANCH}
+    CI_BUILD_NUMBER: ${DRONE_BUILD_NUMBER}
+    CI_BUILD_URL: ${DRONE_BUILD_LINK}
+    CUSTOM_REPOS:
+      from_secret: CUSTOM_REPOS
+    FREENOM_USERNAME:
+      from_secret: FREENOM_USERNAME
+    FREENOM_PASSWORD:
+      from_secret: FREENOM_PASSWORD
+    MAIL_USERNAME:
+      from_secret: MAIL_USERNAME
+    MAIL_PASSWORD:
+      from_secret: MAIL_PASSWORD
+    MAIL_TO:
+      from_secret: MAIL_TO
+
+- name: schedule
+  image: drone/cli:alpine
+  commands:
+  - CRON_LS=$(drone cron ls "$${CI_REPO}" | sed -n "/$${CRONJOB}/,/^$/p")
+  - if [ -z "$${CRON_LS}" ]; then
+  - drone cron add --branch "$${CI_BRANCH}" "$${CI_REPO}" "$${CRONJOB}" "$${CRONEXPR}"
+  - fi
+  environment:
+    DRONE_SERVER:
+      from_secret: DRONE_SERVER
+    DRONE_TOKEN:
+      from_secret: DRONE_TOKEN
+
